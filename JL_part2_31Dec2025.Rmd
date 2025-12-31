@@ -1,0 +1,699 @@
+---
+title: "Project_Part II"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Question 1
+
+**Model assumptions**
+
+Let D denote the observed data, where $y_i$ is a count observed over exposure time $t_i$.
+
+**Level 1: likelihood**\
+The observations are conditionally independent given the rate parameters $\lambda_i$, $$
+y_i \mid \lambda_i \sim \text{Poisson}(\lambda_i t_i), \qquad i=1,\dots,n.
+$$ Hence, $$
+p(D\mid \lambda)=\prod_{i=1}^n p(y_i\mid \lambda_i)
+=\prod_{i=1}^n \frac{(\lambda_i t_i)^{y_i}}{y_i!}\exp(-\lambda_i t_i).
+$$
+
+**Level 2: prior for** $\lambda$\
+Given the common hyperparameter $\beta$, the $\lambda_i$’s are a priori independent with $$
+\lambda_i \mid \beta \overset{ind}{\sim} \text{Gamma}(\alpha,\beta), 
+\qquad i=1,\dots,n,
+$$ using the **shape–rate** parameterization. Therefore, $$
+p(\lambda\mid \beta)=\prod_{i=1}^n p(\lambda_i\mid \beta)
+=\prod_{i=1}^n \frac{\beta^\alpha}{\Gamma(\alpha)}\lambda_i^{\alpha-1}\exp(-\beta\lambda_i).
+$$
+
+**Level 3: hyperprior for** $\beta$\
+$$
+\beta \sim \text{Gamma}(\gamma,\delta).
+$$
+
+### Joint posterior:
+
+Using Bayes’ theorem: $$
+p(\lambda,\beta\mid D)\propto p(D\mid \lambda,\beta)\,p(\lambda,\beta).
+$$ In this model, $\beta$ does not enter the likelihood directly (it only enters through the prior on $\lambda$), hence: $$
+p(D\mid \lambda,\beta)=p(D\mid \lambda).
+$$ Moreover, $$
+p(\lambda,\beta)=p(\lambda\mid \beta)\,p(\beta).
+$$ Therefore, $$
+p(\lambda,\beta \mid D)\propto
+\Bigg[\prod_{i=1}^n \frac{(\lambda_i t_i)^{y_i}}{y_i!}\exp(-\lambda_i t_i)\Bigg]
+\Bigg[\prod_{i=1}^n \frac{\beta^\alpha}{\Gamma(\alpha)}\lambda_i^{\alpha-1}\exp(-\beta\lambda_i)\Bigg]
+\Bigg[\frac{\delta^\gamma}{\Gamma(\gamma)}\beta^{\gamma-1}\exp(-\delta\beta)\Bigg].
+$$
+
+Assuming that we work up to proportionality, we can drop terms that do not depend on $$
+p(\lambda,\beta \mid D)\propto
+\Bigg(\prod_{i=1}^n \lambda_i^{y_i+\alpha-1}\exp\{-(t_i+\beta)\lambda_i\}\Bigg)\;
+\beta^{n\alpha+\gamma-1}\exp(-\delta\beta).
+$$
+
+## Random-walk Metropolis algorithm
+
+### Question 2:
+
+**Transformation and notation**
+
+The model parameters satisfy: $$
+\lambda_i>0 \ (i=1,\ldots,n), \qquad \beta>0.
+$$ To work on an unconstrained parameter space for a random-walk Metropolis algorithm, we apply the log-transformation: $$
+\tilde{\lambda}_i=\log(\lambda_i),\quad i=1,\ldots,n,
+\qquad
+\tilde{\beta}=\log(\beta),
+\qquad
+\theta=(\tilde{\lambda}_1,\ldots,\tilde{\lambda}_n,\tilde{\beta})^\top \in \mathbb{R}^{n+1}.
+$$ The inverse transformation is $$
+\lambda_i=\exp(\tilde{\lambda}_i),\quad i=1,\ldots,n,
+\qquad
+\beta=\exp(\tilde{\beta}),
+$$ which guarantees $\lambda_i>0$ and $\beta>0$ for any $\theta\in\mathbb{R}^{n+1}$.
+
+The Jacobian of the transformation: $$
+p(\tilde{\lambda},\tilde{\beta}\mid D)
+=
+p(\lambda,\beta\mid D)\;
+\left|\frac{\partial(\lambda,\beta)}{\partial(\tilde{\lambda},\tilde{\beta})}\right|.
+$$ Since $\lambda_i=\exp(\tilde{\lambda}_i)$ and $\beta=\exp(\tilde{\beta})$, $$
+\left|\frac{\partial(\lambda,\beta)}{\partial(\tilde{\lambda},\tilde{\beta})}\right|
+=
+\left(\prod_{i=1}^n \lambda_i\right)\beta,
+\qquad
+\log|J|
+=
+\sum_{i=1}^n \tilde{\lambda}_i + \tilde{\beta}.
+$$
+
+**Log-posterior on the transformed scale**
+
+From Question 1, the kernel of the joint posterior is $$
+p(\lambda,\beta\mid D)\propto
+\left[\prod_{i=1}^n \lambda_i^{y_i+\alpha-1}\exp\{-(t_i+\beta)\lambda_i\}\right]\;
+\beta^{n\alpha+\gamma-1}\exp(-\delta\beta).
+$$ taking logarithms, substituting $\lambda_i=\exp(\tilde{\lambda}_i)$, $\beta=\exp(\tilde{\beta})$, and includng $\log|J|$, it yields: $$
+\log p(\tilde{\lambda},\tilde{\beta}\mid D)
+=
+\sum_{i=1}^n (y_i+\alpha)\tilde{\lambda}_i
+-\sum_{i=1}^n t_i e^{\tilde{\lambda}_i}
+-e^{\tilde{\beta}}\sum_{i=1}^n e^{\tilde{\lambda}_i}
++(n\alpha+\gamma)\tilde{\beta}
+-\delta e^{\tilde{\beta}}
++\text{const}.
+$$ (up to a constant).
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+y <- c(4, 1, 5, 14, 3, 19, 7, 6)
+t <- c(95, 16, 63, 126, 6, 32, 16, 19)
+n <- length(y)
+alpha <- 1.8
+gamma <- 0.01
+delta <- 1
+
+log_post_theta <- function(theta, y, t, alpha, gamma, delta){
+  n <- length(y)
+  stopifnot(length(theta) == n + 1)
+
+  tilde_lambda <- theta[1:n]
+  tilde_beta   <- theta[n + 1]
+
+  lambda <- exp(tilde_lambda)
+  beta   <- exp(tilde_beta)
+
+  lp <- (n * alpha + gamma) * tilde_beta -
+    delta * beta +
+    sum((y + alpha) * tilde_lambda) -
+    sum(t * lambda) -
+    beta * sum(lambda)
+
+  return(lp)
+}
+
+theta0 <- rep(0, n + 1)
+log_post_theta(theta0, y, t, alpha, gamma, delta)
+```
+
+### Question 3
+
+**Log-posterior on the transformed scale**
+
+From Question 2 we know that the log-posterior kernel on the transformed scale $\theta=(\tilde{\lambda}_1,\dots,\tilde{\lambda}_n,\tilde{\beta})^\top$ is, up to a constant, $$
+\ell(\tilde{\lambda},\tilde{\beta})
+=
+\sum_{i=1}^n (y_i+\alpha)\tilde{\lambda}_i
+-\sum_{i=1}^n t_i e^{\tilde{\lambda}_i}
+-e^{\tilde{\beta}}\sum_{i=1}^n e^{\tilde{\lambda}_i}
++(n\alpha+\gamma)\tilde{\beta}
+-\delta e^{\tilde{\beta}}
++\text{const}.
+$$ Let $$
+\lambda_i = e^{\tilde{\lambda}_i}, \qquad \beta = e^{\tilde{\beta}}.
+$$
+
+#### Gradient $\nabla \ell(\tilde{\lambda},\tilde{\beta})$
+
+**Derivative with respect to** $\tilde{\lambda}_i$.
+
+Differentiating term-by-term: $(y_i+\alpha)\tilde{\lambda}_i \mapsto (y_i+\alpha)$,\
+$-t_i e^{\tilde{\lambda}_i} \mapsto -t_i e^{\tilde{\lambda}_i}=-t_i\lambda_i$,\
+$-e^{\tilde{\beta}}\sum_{j=1}^n e^{\tilde{\lambda}_j}$ contributes $-e^{\tilde{\beta}}e^{\tilde{\lambda}_i}=-\beta\lambda_i$.\
+Hence, for $i=1,\dots,n$, $$
+\frac{\partial \ell}{\partial \tilde{\lambda}_i}
+=
+(y_i+\alpha) - (t_i+\beta)\lambda_i.
+$$
+
+
+**Derivative with respect to** $\tilde{\beta}$. Only the terms $(n\alpha+\gamma)\tilde{\beta}$, $-\beta\sum_i\lambda_i$ and $-\delta\beta$ depend on $\tilde{\beta}$. Since $\frac{\partial \beta}{\partial \tilde{\beta}}=\beta$, we obtain $$
+\frac{\partial \ell}{\partial \tilde{\beta}}
+=
+(n\alpha+\gamma) - \beta\sum_{i=1}^n \lambda_i - \delta\beta
+=
+(n\alpha+\gamma) - \beta\left(\sum_{i=1}^n \lambda_i+\delta\right).
+$$
+
+**Vector form** Therefore, $$
+\nabla \ell(\tilde{\lambda},\tilde{\beta})
+=
+\left(
+\frac{\partial \ell}{\partial \tilde{\lambda}_1},\dots,\frac{\partial \ell}{\partial \tilde{\lambda}_n},
+\frac{\partial \ell}{\partial \tilde{\beta}}
+\right)^\top,
+$$ with components as above.
+
+#### Hessian $\nabla^2 \ell(\tilde{\lambda},\tilde{\beta})$
+
+We compute second derivatives and arrange them into the block form $$
+\nabla^2 \ell(\tilde{\lambda},\tilde{\beta})=
+\begin{pmatrix}
+H_{\tilde{\lambda}\tilde{\lambda}} & H_{\tilde{\lambda}\tilde{\beta}}\\
+H_{\tilde{\beta}\tilde{\lambda}} & H_{\tilde{\beta}\tilde{\beta}}
+\end{pmatrix}.
+$$
+
+**Second derivatives with respect to** $\tilde{\lambda}$\
+From $\frac{\partial \ell}{\partial \tilde{\lambda}_i}=(y_i+\alpha)-(t_i+\beta)\lambda_i$ and $\frac{\partial \lambda_i}{\partial \tilde{\lambda}_i}=\lambda_i$, we get $$
+\frac{\partial^2 \ell}{\partial \tilde{\lambda}_i^2}
+=
+-(t_i+\beta)\lambda_i,
+\qquad
+\frac{\partial^2 \ell}{\partial \tilde{\lambda}_i\partial \tilde{\lambda}_j}=0\ (i\neq j).
+$$ Hence $H_{\tilde{\lambda}\tilde{\lambda}}$ is diagonal: $$
+H_{\tilde{\lambda}\tilde{\lambda}}=\mathrm{diag}\left( -(t_1+\beta)\lambda_1,\dots,-(t_n+\beta)\lambda_n\right).
+$$
+
+**Cross-derivatives**\
+Differentiate $\frac{\partial \ell}{\partial \tilde{\lambda}_i}=(y_i+\alpha)-(t_i+\beta)\lambda_i$ w.r.t. $\tilde{\beta}$: only $\beta\lambda_i$ depends on $\tilde{\beta}$, so $$
+\frac{\partial^2 \ell}{\partial \tilde{\lambda}_i \partial \tilde{\beta}}
+=
+-\frac{\partial}{\partial \tilde{\beta}}(\beta\lambda_i)
+=
+-(\partial\beta/\partial\tilde{\beta})\lambda_i
+=
+-\beta\lambda_i.
+$$ Thus $H_{\tilde{\lambda}\tilde{\beta}}=(-\beta\lambda_1,\dots,-\beta\lambda_n)^\top$ and $H_{\tilde{\beta}\tilde{\lambda}}=H_{\tilde{\lambda}\tilde{\beta}}^\top$.
+
+**Second derivative with respect to** $\tilde{\beta}$\
+From $\frac{\partial \ell}{\partial \tilde{\beta}}=(n\alpha+\gamma)-\beta(\sum_i\lambda_i+\delta)$ and $\frac{\partial\beta}{\partial\tilde{\beta}}=\beta$, we obtain $$
+\frac{\partial^2 \ell}{\partial \tilde{\beta}^2}
+=
+-\beta\left(\sum_{i=1}^n\lambda_i+\delta\right).
+$$
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+grad_log_post <- function(theta, y, t, alpha, gamma, delta){
+  n <- length(y)
+  stopifnot(length(theta) == n + 1)
+
+  tilde_lambda <- theta[1:n]
+  tilde_beta   <- theta[n + 1]
+
+  lambda <- exp(tilde_lambda)
+  beta   <- exp(tilde_beta)
+
+  g_lambda <- (y + alpha) - (t + beta) * lambda
+  g_beta   <- (n * alpha + gamma) - beta * (sum(lambda) + delta)
+
+  c(g_lambda, g_beta)
+}
+
+hess_log_post <- function(theta, y, t, alpha, gamma, delta){
+  n <- length(y)
+  stopifnot(length(theta) == n + 1)
+
+  tilde_lambda <- theta[1:n]
+  tilde_beta   <- theta[n + 1]
+
+  lambda <- exp(tilde_lambda)
+  beta   <- exp(tilde_beta)
+
+  H <- matrix(0, n + 1, n + 1)
+
+  diag(H)[1:n] <- -(t + beta) * lambda
+
+  H[1:n, n + 1] <- -beta * lambda
+  H[n + 1, 1:n] <- -beta * lambda
+
+  H[n + 1, n + 1] <- -beta * (sum(lambda) + delta)
+
+  H
+}
+
+theta0 <- rep(0, length(y) + 1)
+
+g0 <- grad_log_post(theta0, y, t, alpha, gamma, delta)
+H0 <- hess_log_post(theta0, y, t, alpha, gamma, delta)
+
+length(g0)     
+dim(H0)        
+round(g0, 3)  
+round(H0[1:3, 1:3], 3)  
+```
+
+### Question 4
+
+We maximize the log-posterior on the transformed scale, $$
+\ell(\theta)=\log p(\tilde{\lambda},\tilde{\beta}\mid D),
+$$ and locate the maximizer $\theta^*_{NR}$ using Newton–Raphson iterations $$
+\theta^{(m+1)}=\theta^{(m)}-\Big[\nabla^2 \ell(\theta^{(m)})\Big]^{-1}\nabla \ell(\theta^{(m)}),
+\qquad \theta^{(0)}=\mathbf{0}\in\mathbb{R}^{n+1}.
+$$ To improve numerical stability, we use step-halving (backtracking) whenever a full Newton step decreases $\ell(\theta)$.
+
+Below we report $\theta^*_{NR}$ rounded to five digits.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+newton_mode <- function(theta0, y, t, alpha, gamma, delta,
+                        tol = 1e-10, maxit = 200, verbose = FALSE) {
+
+  theta <- theta0
+  lcur  <- log_post_theta(theta, y, t, alpha, gamma, delta)
+
+  for (it in 1:maxit) {
+
+    g <- grad_log_post(theta, y, t, alpha, gamma, delta)
+    H <- hess_log_post(theta, y, t, alpha, gamma, delta)
+
+    step <- solve(H, g)
+
+    s <- 1
+    theta_new <- theta - s * step
+    lnew <- log_post_theta(theta_new, y, t, alpha, gamma, delta)
+
+    while (lnew < lcur && s > 1e-12) {
+      s <- s / 2
+      theta_new <- theta - s * step
+      lnew <- log_post_theta(theta_new, y, t, alpha, gamma, delta)
+    }
+
+    if (verbose) {
+      cat(sprintf("it=%3d  step_scale=%.3g  lp=%.6f  max|dtheta|=%.3e\n",
+                  it, s, lnew, max(abs(theta_new - theta))))
+    }
+
+    if (max(abs(theta_new - theta)) < tol) {
+      return(list(theta_star = theta_new, lp = lnew, it = it, converged = TRUE))
+    }
+
+    theta <- theta_new
+    lcur  <- lnew
+  }
+
+  list(theta_star = theta, lp = lcur, it = maxit, converged = FALSE)
+}
+
+theta_init <- rep(0, n + 1)  
+out_nr <- newton_mode(theta_init, y, t, alpha, gamma, delta, tol = 1e-10, maxit = 200)
+
+theta_star <- out_nr$theta_star
+theta_star_rounded <- round(theta_star, 5)
+
+param_names <- c(paste0("lambda_", 1:n), "beta")
+
+tab_combined <- data.frame(
+  parameter      = param_names,
+  estimate_log   = round(theta_star, 5),               
+  estimate_orig  = round(exp(theta_star), 5)           
+)
+
+knitr::kable(
+  tab_combined,
+  col.names = c("parameter", "estimate (log-scale)", "estimate (original scale)"),
+  align = "lrr"
+)
+```
+
+### Question 5
+
+The Laplace approximation is based on a second-order Taylor expansion of the log-posterior $$
+\ell(\theta)=\log p(\tilde{\lambda},\tilde{\beta}\mid D)
+$$ around its mode $\theta^*_{NR}$. Near the mode we approximate $$
+\ell(\theta)\;\approx\;\ell(\theta^*_{NR})
+-\frac{1}{2}(\theta-\theta^*_{NR})^\top
+\Big[-\nabla^2\ell(\theta^*_{NR})\Big]
+(\theta-\theta^*_{NR}),
+$$ which is the log-kernel of a multivariate normal density. Therefore, under the Laplace approximation, $$
+p(\theta\mid D)\approx \mathcal{N}(\theta^*_{NR},\Sigma^*),
+\qquad
+\Sigma^*=\Big[-\nabla^2\ell(\theta^*_{NR})\Big]^{-1}.
+$$ Here $\theta=(\tilde{\lambda}_1,\ldots,\tilde{\lambda}_n,\tilde{\beta})^\top$ is the parameter vector on the log transformed scale. The diagonal elements of $\Sigma^*$ are approximate posterior variances of $\tilde{\lambda}_i$ and $\tilde{\beta}$, and the off-diagonal elements are their posterior covariances.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+H_star <- hess_log_post(theta_star, y, t, alpha, gamma, delta)
+
+Sigma_star <- solve(-H_star)
+
+Sigma_star_rounded <- round(Sigma_star, 5)
+knitr::kable(Sigma_star_rounded)
+```
+
+### Question 6
+
+We run a random-walk Metropolis sampler on the transformed scale $\theta=(\tilde{\lambda}_1,\ldots,\tilde{\lambda}_n,\tilde{\beta})^\top$, targeting the log-posterior $\ell(\theta)=\log p(\tilde{\lambda},\tilde{\beta}\mid D)$ from Question 2. As proposal we use $$
+\theta^{\text{prop}} = \theta^{(m)} + \varepsilon,\qquad \varepsilon\sim N(0,\,c\Sigma^*),
+$$ where $\Sigma^*=[-\nabla^2\ell(\theta^*_{NR})]^{-1}$ is the Laplace covariance from Question 5.
+
+We initialize the chain at the posterior mode $\theta^{(0)}=\theta^*_{NR}$.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(mvtnorm)
+
+set.seed(1995)
+
+M      <- 35000
+burnin <- 5000
+
+d <- n + 1  
+
+rw_metropolis <- function(c, M, theta_init, Sigma_star, y, t, alpha, gamma, delta) {
+
+  chain <- matrix(NA_real_, nrow = M, ncol = d)
+  chain[1, ] <- theta_init
+
+  acc <- 0L
+  Sigma_prop <- c * Sigma_star
+
+  lp_cur <- log_post_theta(chain[1, ], y, t, alpha, gamma, delta)
+
+  for (m in 2:M) {
+
+    theta_prop <- chain[m - 1, ] + as.numeric(rmvnorm(1, mean = rep(0, d), sigma = Sigma_prop))
+    lp_prop <- log_post_theta(theta_prop, y, t, alpha, gamma, delta)
+
+    logr <- lp_prop - lp_cur
+
+    if (is.finite(logr) && (logr >= 0 || log(runif(1)) <= logr)) {
+      chain[m, ] <- theta_prop
+      lp_cur <- lp_prop
+      acc <- acc + 1L
+    } else {
+      chain[m, ] <- chain[m - 1, ]
+    }
+  }
+
+  list(chain = chain, acc_rate = acc / (M - 1))
+}
+
+pilot_M <- 5000
+c_val <- 1.0
+
+for (k in 1:25) {
+  out_p <- rw_metropolis(c = c_val, M = pilot_M,
+                         theta_init = theta_star, Sigma_star = Sigma_star,
+                         y = y, t = t, alpha = alpha, gamma = gamma, delta = delta)
+
+  ar <- out_p$acc_rate
+
+  if (ar > 0.23) c_val <- c_val * 1.25
+  if (ar < 0.23) c_val <- c_val * 0.80
+
+  if (abs(ar - 0.23) < 0.01) break
+}
+
+out <- rw_metropolis(c = c_val, M = M,
+                     theta_init = theta_star, Sigma_star = Sigma_star,
+                     y = y, t = t, alpha = alpha, gamma = gamma, delta = delta)
+
+accept_rate <- out$acc_rate
+
+theta_post <- out$chain[(burnin + 1):M, , drop = FALSE]
+
+lambda_draws <- exp(theta_post[, 1:n, drop = FALSE])  
+beta_draws   <- exp(theta_post[, n + 1])               
+
+summ <- function(x) c(mean = mean(x),
+                      q2.5 = unname(quantile(x, 0.025)),
+                      med  = unname(quantile(x, 0.5)),
+                      q97.5= unname(quantile(x, 0.975)))
+
+knitr::kable(data.frame(tuned_c = c_val,
+                        acceptance_rate = round(accept_rate, 4)))
+
+knitr::kable(as.data.frame(t(summ(beta_draws))), digits = 4)
+
+lambda_summ <- t(apply(lambda_draws, 2, summ))
+rownames(lambda_summ) <- paste0("lambda_", 1:n)
+knitr::kable(as.data.frame(lambda_summ), digits = 4)
+```
+
+### Question 7
+
+For virus $v_4$, the data model is $$
+y_4 \mid \lambda_4 \sim \text{Poisson}(\lambda_4 t_4), \qquad t_4 = 126.
+$$
+
+Therefore the conditional expectation is $$
+E(y_4 \mid \lambda_4) = \lambda_4 t_4.
+$$
+
+Given posterior draws $\{\lambda_4^{(m)}\}_{m=1}^M$ from the MCMC chain, we compute draws of the expected value: $$
+E(y_4)^{(m)} = \lambda_4^{(m)} \, t_4.
+$$
+
+We use the posterior mean of $E(y_4)$ as a point estimate and the 2.5% and 97.5% posterior quantiles as a 95% quantile-based credible interval. Results are rounded to the nearest integer.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+t4 <- t[4]
+
+Ey4_draws <- lambda_draws[, 4] * t4
+
+Ey4_mean <- mean(Ey4_draws)
+Ey4_ci   <- quantile(Ey4_draws, probs = c(0.025, 0.975))
+
+Ey4_out <- data.frame(
+  quantity = "E(y4) = lambda4 * t4",
+  point_estimate = round(Ey4_mean),
+  CI2.5 = round(Ey4_ci[1]),
+  CI97.5 = round(Ey4_ci[2])
+)
+
+knitr::kable(Ey4_out, align = "lrrr")
+```
+
+### Question 8
+
+Using MCMC draws $$\{\lambda_4^{(m)}\}_{m=1}^{M_{\text{post}}}$$ from the posterior (after burn-in), we estimate the posterior probability by the Monte Carlo average of an indicator function: $$
+\widehat{\mathbb{P}}(\lambda_4>0.11\mid D)
+=
+\frac{1}{M_{\text{post}}}\sum_{m=1}^{M_{\text{post}}}\mathbf{1}\{\lambda_4^{(m)} > 0.11\}.
+$$
+
+**Chain initialization.** We initialize the chain at the posterior mode $$\theta^{(0)}=\theta^*_{NR}$$ (from the Newton–Raphson algorithm), which reduces the burn-in period.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p_lambda4_gt_011 <- mean(lambda_draws[, 4] > 0.11)
+
+knitr::kable(
+  data.frame(quantity = "P(lambda_4 > 0.11 | D)", estimate = round(p_lambda4_gt_011, 4)),
+  align = "lr"
+)
+```
+
+## Gibbs sampling
+
+### Question 9
+
+From Question 1, the joint posterior kernel (shape–rate Gamma parameterization) is $$
+p(\lambda,\beta \mid D)\propto
+\left[\prod_{i=1}^{n}\lambda_i^{y_i+\alpha-1}\exp\{-(t_i+\beta)\lambda_i\}\right]\;
+\beta^{n\alpha+\gamma-1}\exp(-\delta\beta).
+$$
+
+**Full conditional for** $\lambda_i$
+
+Conditioning on $\beta$ (and the data $D$), the terms involving $\lambda_i$ are $$
+p(\lambda_i\mid \beta,D)\propto
+\lambda_i^{y_i+\alpha-1}\exp\{-(t_i+\beta)\lambda_i\}.
+$$ Hence, $$
+\lambda_i\mid \beta,D \sim \mathrm{Gamma}(\alpha+y_i,\;\beta+t_i),
+\qquad i=1,\ldots,n,
+$$ where we use the shape–rate parameterization.
+
+**Full conditional for** $\beta$
+
+Conditioning on $\lambda$ (and $D$), the terms involving $\beta$ are $$
+p(\beta\mid \lambda,D)\propto
+\beta^{n\alpha+\gamma-1}\exp\left\{-\beta\sum_{i=1}^n \lambda_i-\delta\beta\right\}
+=
+\beta^{n\alpha+\gamma-1}\exp\left\{-\beta\left(\delta+\sum_{i=1}^n \lambda_i\right)\right\}.
+$$ Hence, $$
+\beta\mid \lambda,D \sim \mathrm{Gamma}\!\left(\gamma+n\alpha,\;\delta+\sum_{i=1}^n \lambda_i\right).
+$$
+
+Both full conditionals belong to the Gamma family.
+
+### Question 10
+
+Let $M$ be the total number of Gibbs iterations and let $B$ denote the burn-in length.
+
+1.  **Initialization:** choose starting values $\beta^{(0)} > 0$ and $\lambda_i^{(0)} > 0$ for $i=1,\ldots,n$.
+2.  **Gibbs iterations:** for $m = 1,\ldots,M$ do
+    -   for each $i = 1,\ldots,n$, draw $$
+        \lambda_i^{(m)} \sim \mathrm{Gamma}(\alpha + y_i,\; \beta^{(m-1)} + t_i),
+        $$
+    -   then draw $$
+        \beta^{(m)} \sim \mathrm{Gamma}\!\left(\gamma + n\alpha,\; \delta + \sum_{i=1}^n \lambda_i^{(m)}\right).
+        $$
+3.  **Post-processing:** discard the first $B$ draws and use $$
+    \{(\lambda^{(m)},\beta^{(m)})\}_{m=B+1}^{M}
+    $$ for posterior inference.
+
+Because Gibbs sampling draws directly from the full conditional distributions, the “acceptance rate” is $100\%$.
+
+### Question 11
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(2025)  
+
+library(coda)
+# Gibbs settings
+M      <- 35000
+burnin <- 5000
+
+lambda_chain_gibbs <- matrix(NA_real_, nrow = M, ncol = n)
+beta_chain_gibbs   <- numeric(M)
+
+# Initial values
+beta_cur   <- 1
+lambda_cur <- (y + 0.5) / (t + 1)
+
+for (m in 1:M) {
+
+  lambda_cur <- rgamma(n, shape = alpha + y, rate = beta_cur + t)
+
+  beta_cur <- rgamma(1, shape = gamma + n * alpha, rate = delta + sum(lambda_cur))
+
+  lambda_chain_gibbs[m, ] <- lambda_cur
+  beta_chain_gibbs[m]     <- beta_cur
+}
+
+cat("Acceptance rate (Gibbs): 100% (direct draws from full conditionals)\n")
+
+lambda_draws_gibbs <- lambda_chain_gibbs[(burnin + 1):M, , drop = FALSE]
+beta_draws_gibbs   <- beta_chain_gibbs[(burnin + 1):M]
+
+mcmc_obj_gibbs <- mcmc(cbind(lambda_draws_gibbs, beta = beta_draws_gibbs))
+colnames(mcmc_obj_gibbs) <- c(paste0("lambda_", 1:n), "beta")
+
+summ <- function(x) c(mean = mean(x),
+                      q2.5 = unname(quantile(x, 0.025)),
+                      med  = unname(quantile(x, 0.5)),
+                      q97.5= unname(quantile(x, 0.975)))
+
+beta_tab <- as.data.frame(t(summ(beta_draws_gibbs)))
+rownames(beta_tab) <- "beta"
+
+lambda_tab <- t(apply(lambda_draws_gibbs, 2, summ))
+rownames(lambda_tab) <- paste0("lambda_", 1:n)
+
+knitr::kable(beta_tab, digits = 4, caption = "Posterior summary for beta (Gibbs)")
+knitr::kable(as.data.frame(lambda_tab), digits = 4,
+             caption = "Posterior summaries for lambda_1,...,lambda_n (Gibbs)")
+```
+
+### Question 12
+
+We assess convergence of the post burn-in chain using the Geweke diagnostic and the Heidelberger–Welch stationarity test. For Geweke, the general rule is that large absolute $z$-scores (e.g., $|z|>1.96$) may indicate lack of convergence. Heidelberger–Welch reports whether stationarity is accepted and whether the half-width (precision) criterion is satisfied.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(coda)
+
+# Geweke diagnostic
+gw <- coda::geweke.diag(mcmc_obj_gibbs)$z
+gw_tab <- data.frame(
+  parameter = names(gw),
+  z = as.numeric(gw),
+  row.names = NULL
+)
+knitr::kable(gw_tab, digits = 3, caption = "Geweke diagnostic (z-scores)")
+
+
+# Heidelberger–Welch diagnostic
+
+hd_raw <- coda::heidel.diag(mcmc_obj_gibbs)
+
+if (is.list(hd_raw)) {
+  hd_mat <- do.call(rbind, hd_raw)
+} else {
+  hd_mat <- as.matrix(hd_raw)
+}
+
+if (is.null(rownames(hd_mat)) || any(rownames(hd_mat) == "")) {
+  rownames(hd_mat) <- colnames(mcmc_obj_gibbs)
+}
+
+hd_chr <- apply(hd_mat, 2, function(col) {
+  ifelse(is.na(col), "", formatC(col, digits = 3, format = "f"))
+})
+rownames(hd_chr) <- rownames(hd_mat)
+colnames(hd_chr) <- colnames(hd_mat)
+
+knitr::kable(hd_chr, caption = "Heidelberger–Welch diagnostics")
+```
+
+### Question 13
+
+Conditionally on $\lambda_6$, $$
+y_6 \mid \lambda_6 \sim \mathrm{Poisson}(\lambda_6 t_6),
+\qquad
+\mathbb{E}(y_6 \mid \lambda_6) = \lambda_6 t_6.
+$$ Using posterior draws ${\lambda_6^{(m)}}$, we compute draws of $$
+\mathbb{E}(y_6)^{(m)} = \lambda_6^{(m)} t_6,
+$$ and summarize them by the posterior mean and the 2.5% / 97.5% quantiles (rounded to the nearest integer as required).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+t6 <- 32
+
+Ey6_draws <- lambda_draws[, 6] * t6
+Ey6_mean  <- mean(Ey6_draws)
+Ey6_ci    <- quantile(Ey6_draws, probs = c(0.025, 0.975))
+
+Ey6_out <- round(c(point_estimate = Ey6_mean,
+                   CI2.5 = Ey6_ci[1],
+                   CI97.5 = Ey6_ci[2]))
+
+Ey6_out
+
+```
+
+### Question 14
+
+We approximate the posterior probability by Monte Carlo: $$
+\mathbb{P}(\lambda_6 > 0.53 \mid D)
+\approx
+\frac{1}{M-B}\sum_{m=B+1}^{M}\mathbf{1}{\lambda_6^{(m)} > 0.53}.
+$$
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+P_lambda6_gt_053 <- mean(lambda_draws[, 6] > 0.53)
+P_lambda6_gt_053
+```
