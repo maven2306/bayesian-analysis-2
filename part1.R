@@ -130,7 +130,7 @@ gelman.diag(model.mcmc)
 geweke.diag(model.mcmc)
 geweke.plot(model.mcmc,ask=FALSE)
 
-# additional?
+
 effectiveSize(model.mcmc)
 plot(model.mcmc)
 
