@@ -1,0 +1,174 @@
+---
+title: "matteoQ9to14"
+output: html_document
+date: "2026-01-01"
+---
+
+# Question 11 (Gibbs Sampler)
+
+## 1. INITIALIZATION 
+
+```{r}
+set.seed(2025)
+
+# Define total iterations and burn-in
+M <- 35000  # Total iterations
+B <- 5000   # Burn-in period
+
+# Define the data from the problem
+y <- c(4, 1, 5, 14, 3, 19, 7, 6)
+t <- c(95, 16, 63, 126, 6, 32, 16, 19)
+
+# Define the fixed hyperparameters
+alpha <- 1.8
+gamma <- 0.01
+delta <- 1
+
+# Number of groups
+n <- length(y)
+
+# Create storage matrices for samples
+# Each row corresponds to a group/parameter, each column to an iteration
+lambda_samples <- matrix(0, nrow = n, ncol = M)
+beta_samples <- numeric(M)
+
+# Set initial values for iteration 1
+lambda_samples[, 1] <- rep(1, n)  
+beta_samples[1] <- 1.0
+```
+
+## 2. MAIN GIBBS SAMPLING LOOP
+
+```{r}
+for (m in 2:M) {
+  
+  # Step 3a: Update each lambda_i
+  for (i in 1:n) {
+    # Define parameters for the full conditional of lambda_i
+    shape_lambda <- y[i] + alpha
+    rate_lambda <- t[i] + beta_samples[m - 1]  # Use beta from previous iteration
+    
+    # Draw new sample from Gamma distribution
+    lambda_samples[i, m] <- rgamma(1, shape = shape_lambda, rate = rate_lambda)
+  }
+  
+  # Step 3b: Update beta
+  # Calculate sum of newly updated lambda values from current iteration
+  sum_lambda <- sum(lambda_samples[, m])
+  
+  # Define parameters for the full conditional of beta
+  shape_beta <- 8 * alpha + gamma
+  rate_beta <- delta + sum_lambda
+  
+  # Draw new sample from Gamma distribution
+  beta_samples[m] <- rgamma(1, shape = shape_beta, rate = rate_beta)
+}
+```
+
+## 3. POST-PROCESSING
+
+```{r}
+# Discard burn-in samples
+lambda_posterior <- lambda_samples[, (B + 1):M]  
+beta_posterior <- beta_samples[(B + 1):M]        
+
+# Number of valid posterior samples
+n_posterior_samples <- M - B
+```
+
+## 4. SUMMARY OF THE POSTERIOR DISTRIBUTIONS 
+
+```{r}
+cat('Beta')
+print(summary(beta_posterior))
+cat("\n")
+
+for (i in 1:n) {
+  cat('Lambda ', i)
+  print(summary(lambda_posterior[i, ]))
+  cat("\n")
+}
+```
+# Question 12 (Convergence Diagnostics)
+
+## 1. INITIALIZATION 
+```{r}
+# Load the coda package for MCMC diagnostics
+library(coda)
+
+# Create a single matrix where:
+# - Columns 1-8 are the lambda parameters (transposed from lambda_posterior)
+# - Column 9 is the beta parameter
+posterior_matrix <- cbind(t(lambda_posterior), beta_posterior)
+
+# Add column names for clarity
+colnames(posterior_matrix) <- c(paste0("lambda_", 1:8), "beta")
+
+# Convert to mcmc object for use with coda functions
+posterior_mcmc <- as.mcmc(posterior_matrix)
+
+```
+
+
+
+## 2. RUN GEWEKE DIAGNOSTICS
+```{r}
+geweke_results <- geweke.diag(posterior_mcmc)
+
+cat("Geweke Z-scores:\n")
+print(geweke_results)
+cat("\n")
+```
+## 3. PRINT THE GEWEKE PLOTS 
+```{r}
+geweke.plot(posterior_mcmc)
+```
+## 4. HEILDELBERGER-WELCH STATIONARITY TEST 
+```{r}
+# Run Heidelberger-Welch diagnostic
+heidel_results <- heidel.diag(posterior_mcmc)
+
+cat("Heidelberger-Welch Test Results:\n")
+print(heidel_results)
+```
+# Question 13 (Posterior Inference for E(y_6))
+```{r}
+# Extract the 6th row from lambda_posterior matrix
+lambda_6_posterior <- lambda_posterior[6, ]
+
+# Define the exposure time for group 6
+t_6 <- t[6]  # t_6 = 32
+
+# Calculate E(y_6) for each posterior sample
+# This gives us the full posterior distribution of E(y_6)
+E_y6_posterior <- lambda_6_posterior * t_6
+```
+
+## CALCULATE THE POINT ESTIMATE AND 95% CI
+
+```{r}
+point_estimate_y6 <- mean(E_y6_posterior)
+cat('Point estimate: ', point_estimate_y6)
+cat('\n')
+
+credible_interval_y6 <- quantile(E_y6_posterior, probs = c(0.025, 0.975))
+cat('95% Credible Interval: ', credible_interval_y6)
+```
+
+# Question 14 (Calculate posterior probability)
+```{r}
+# Create a logical vector checking the condition lambda_6 > 0.53
+condition_satisfied <- lambda_6_posterior > 0.53
+
+# Count how many samples satisfy the condition
+# sum() treats TRUE as 1 and FALSE as 0
+num_samples_above_threshold <- sum(condition_satisfied)
+
+# Total number of posterior samples
+total_samples <- length(lambda_6_posterior)
+
+# Monte Carlo estimate: proportion of samples satisfying the condition
+prob_lambda6_gt_053 <- num_samples_above_threshold / total_samples
+
+cat('There is a probability of', round(prob_lambda6_gt_053*100,2), '% of lambda_6 being higher than 0.53')
+```
