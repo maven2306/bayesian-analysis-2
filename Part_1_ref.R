@@ -5,7 +5,7 @@ library(loo)       # for WAIC (model comparison, ref:DIC and model comparison)
 library(bayesplot) # for PPC (posterior predictive checks, ref: Predictive approach to GOF testing)
 library(ggmcmc)    # for caterpillar plots (convergence diagnostics, ref: Convergence diagnostics in CODA)
 library(MCMCvis)   # for additional summaries and traces (convergence diagnostics)
-library(dplyr)     # for data summarization (e.g., nobs per subject)
+library(dplyr)
 
 set.seed(123)
 
@@ -28,7 +28,7 @@ K <- ncol(X)  # Number of predictors (for variable selection in ridge/lasso, ref
 # Ref: Chapter 6 Hierarchical models; Gaussian hierarchical models (adapted to logistic)
 ############################################################
 cat("model {
-  # Likelihood - Level 1 (ref: Page 235 - Level 1 in hierarchical models)
+  # Likelihood - Level 1 (ref:Level 1 in hierarchical models)
   for (i in 1:N) {
     working[i] ~ dbern(p[i])
     logit(p[i]) <- alpha + b[id_num[i]]
@@ -90,7 +90,7 @@ samples_m1 <- coda.samples(jags_m1,
 summary(samples_m1)
 plot(samples_m1[, c("alpha", "sigma_b")])  # Trace and density (ref: Trace plots)
 gelman.diag(samples_m1, multivariate = FALSE)  # Univariate BGR only (ref: Formal diagnostics)
-geweke.diag(samples_m1)  # Geweke (ref: Page 411)
+geweke.diag(samples_m1)  # Geweke
 autocorr.plot(samples_m1[, "alpha"], lag.max = 30)  # Autocorr
 effectiveSize(samples_m1)  # Effective sample size 
 
@@ -317,7 +317,7 @@ abline(v = mean(samples_m1[[1]][,"alpha"]), col="red")  # Approximate
 
 ############################################################
 # 5. POSTERIOR PREDICTIVE CHECK for Model 1
-# Ref: Page 382 - PPC with distribution and discrepancies
+# Ref:PPC with distribution and discrepancies
 ############################################################
 cat("model {
   for (i in 1:N) {
